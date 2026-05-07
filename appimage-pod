@@ -16,7 +16,7 @@ CONFIG_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}/app-image-podman"
 
 usage() {
     cat <<EOF
-Usage: $0 [--name NAME] [--rebuild-image] [--re-extract] <AppImage|name> [args...]
+Usage: $0 [--name NAME] [--rebuild-image] [--re-extract] <AppImage|URL|name> [args...]
        $0 --show
        $0 -h | --help
 
@@ -26,11 +26,16 @@ GUI libs; AppImages are extracted to a host cache and bind-mounted at
 /opt/app, so one image works for any AppImage.
 
 Positional:
-  <AppImage|name>   Either a path to an .AppImage file (extracted on first
-                    use, then cached), or a bare name that already exists in
-                    the cache (e.g. "UaExpert"). Once an app has been run
-                    once from a file, the original AppImage can be deleted
-                    and re-launched by name.
+  <AppImage|URL|name>
+                    One of:
+                      - an http(s) URL (downloaded into the cache, then
+                        extracted as if it were a local file),
+                      - a path to a local .AppImage file (extracted on first
+                        use, then cached), or
+                      - a bare name that already exists in the cache
+                        (e.g. "UaExpert").
+                    Once an app has been run once from a file or URL, the
+                    original is no longer needed — re-launch by name.
   args...           Extra arguments passed through to the AppImage entrypoint.
 
 Flags:
@@ -41,7 +46,7 @@ Flags:
   --rebuild-image   Force rebuild of the runtime image from ./Containerfile
                     (only works when run from a clone of the repo).
   --re-extract      Force re-extraction of the AppImage (only valid when
-                    launching from a file path).
+                    launching from a file path or URL).
   --show            List all cached AppImages and exit.
   -h, --help        Show this help and exit.
 
@@ -58,9 +63,10 @@ Env:
 
 Examples:
   $0 ~/Downloads/UaExpert-2.0.1-x86_64.AppImage
-  $0 UaExpert                       # re-launch from cache
-  $0 --name myapp ~/some.AppImage   # override the derived name
-  $0 --show                         # list cached apps
+  $0 https://example.com/foo.AppImage   # fetch then run
+  $0 UaExpert                           # re-launch from cache
+  $0 --name myapp ~/some.AppImage       # override the derived name
+  $0 --show                             # list cached apps
 EOF
     exit "${1:-1}"
 }
@@ -101,10 +107,22 @@ done
 
 [[ -n "$APPIMAGE" ]] || usage
 
-# The positional argument is either a path to an .AppImage file or a bare
-# name referring to a previously-extracted app in the cache.
+# The positional argument can be:
+#   1. an http(s) URL — downloaded into the cache, then treated as a file
+#   2. a path to an .AppImage file — extracted on first use
+#   3. a bare name — must already exist in the cache
 FROM_CACHE=0
-if [[ -f "$APPIMAGE" ]]; then
+if [[ "$APPIMAGE" =~ ^https?:// ]]; then
+    DOWNLOAD_DIR="$CACHE_ROOT/.downloads"
+    mkdir -p "$DOWNLOAD_DIR"
+    URL_BASENAME="${APPIMAGE##*/}"
+    URL_BASENAME="${URL_BASENAME%%\?*}"
+    [[ -z "$URL_BASENAME" ]] && URL_BASENAME="downloaded.AppImage"
+    DOWNLOADED="$DOWNLOAD_DIR/$URL_BASENAME"
+    echo ">> Downloading $APPIMAGE" >&2
+    curl -fsSL --retry 3 -o "$DOWNLOADED" "$APPIMAGE"
+    APPIMAGE="$DOWNLOADED"
+elif [[ -f "$APPIMAGE" ]]; then
     APPIMAGE="$(realpath "$APPIMAGE")"
 elif [[ "$APPIMAGE" != */* ]]; then
     FROM_CACHE=1

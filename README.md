@@ -28,7 +28,14 @@ chmod +x appimage-pod
 > hand back the previous version of the script for a few minutes after a
 > push.
 
-Then run any AppImage:
+Then run any AppImage. You can pass a URL — the AppImage will be
+downloaded, extracted, and run in one step:
+
+```bash
+appimage-pod https://download.kde.org/stable/krita/5.3.1/krita-5.3.1-x86_64.AppImage
+```
+
+…or a local file:
 
 ```bash
 appimage-pod ~/Downloads/UaExpert-2.0.1-x86_64.AppImage
@@ -38,11 +45,11 @@ The first invocation pulls `ghcr.io/gilesknap/appimage-pod:latest` and
 extracts the AppImage to `~/.cache/app-image-podman/<Name>/`. Subsequent
 invocations reuse both.
 
-After the first run the original `.AppImage` file is no longer needed:
-the extraction lives in the cache. Re-launch by bare name:
+After the first run the original `.AppImage` (or URL) is no longer
+needed: the extraction lives in the cache. Re-launch by bare name:
 
 ```bash
-appimage-pod UaExpert
+appimage-pod krita
 ```
 
 List what's currently cached:
@@ -73,21 +80,37 @@ appimage-pod --show
 ## Usage
 
 ```
-appimage-pod [--name NAME] [--rebuild-image] [--re-extract] <AppImage|name> [args...]
+appimage-pod [--name NAME] [--rebuild-image] [--re-extract] <AppImage|URL|name> [args...]
 appimage-pod --show
 ```
 
-The positional argument is either a path to an `.AppImage` file or a bare
-name that already exists in the cache (e.g. `UaExpert`). A bare name skips
-the extraction step entirely — the original file can be deleted once it's
-been cached on first run.
+The positional argument can be:
+
+- a **path** to a local `.AppImage` file (extracted on first use, then cached),
+- an **http(s) URL** (downloaded into the cache, then extracted), or
+- a **bare name** that already exists in the cache (e.g. `UaExpert`).
+
+After the first run from a file or URL, the original is no longer needed —
+re-launch by name.
 
 | Flag | Effect |
 |------|--------|
-| `--name NAME`     | Override the derived app name (used for the per-app cache and config dirs). Default: derived from the AppImage filename, or from the positional argument when launching by name. |
+| `--name NAME`     | Override the derived app name (used for the per-app cache and config dirs). Default: derived from the AppImage filename, the URL basename, or the positional argument in name mode. |
 | `--rebuild-image` | Force rebuild of the runtime image from `./Containerfile` (only useful from a clone). |
-| `--re-extract`    | Force re-extraction of the AppImage (only valid when launching from a file path). |
+| `--re-extract`    | Force re-extraction of the AppImage (only valid when launching from a file path or URL). |
 | `--show`          | List all cached AppImages and exit. |
+
+## Trying it out
+
+A few good AppImages to smoke-test the runtime:
+
+```bash
+# appimagetool — small (~15MB), reference AppImage from the AppImage project
+appimage-pod https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage --version
+
+# Krita — heavyweight, exercises Qt/OpenGL/multimedia
+appimage-pod https://download.kde.org/stable/krita/5.3.1/krita-5.3.1-x86_64.AppImage
+```
 
 | Env var | Effect |
 |---------|--------|
