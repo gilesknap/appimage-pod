@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# Run an AppImage inside a generic GUI-runtime podman container.
+#
+# Strategy:
+#   - One image (built once or pulled from a registry) provides the GUI runtime libs.
+#   - The AppImage is extracted to a host cache and bind-mounted at /opt/app.
+#   - Per-app persistent state lives in ~/.config/app-image-podman/<name>/ and is
+#     bind-mounted as the container's $HOME, so wherever the app writes under
+#     $HOME ends up captured in one tree per app.
+set -euo pipefail
+
+IMAGE="${APP_IMAGE_PODMAN_IMAGE:-localhost/app-image-podman:latest}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/app-image-podman"
+CONFIG_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}/app-image-podman"
+
+usage() {
+    cat <<EOF
+Usage: $0 [--name NAME] [--rebuild-image] [--re-extract] <AppImage> [args...]
+
+  --name NAME       Override the derived app name (used for image tag and
+                    config dir). Default: derived from the AppImage filename.
+  --rebuild-image   Force rebuild of the runtime image from ./Containerfile.
+  --re-extract      Force re-extraction of the AppImage (otherwise cached).
+
+Env:
+  APP_IMAGE_PODMAN_IMAGE  Image reference (default: localhost/app-image-podman:latest).
+EOF
+    exit "${1:-1}"
+}
+
+NAME=""
+REBUILD_IMAGE=0
+RE_EXTRACT=0
+APPIMAGE=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --name)          NAME="$2"; shift 2 ;;
+        --rebuild-image) REBUILD_IMAGE=1; shift ;;
+        --re-extract)    RE_EXTRACT=1; shift ;;
+        -h|--help)       usage 0 ;;
+        --)              shift; APPIMAGE="${1:-}"; shift || true; break ;;
+        -*)              echo "Unknown flag: $1" >&2; usage ;;
+        *)               APPIMAGE="$1"; shift; break ;;
+    esac
+done
+
+[[ -n "$APPIMAGE" && -f "$APPIMAGE" ]] || usage
+APPIMAGE="$(realpath "$APPIMAGE")"
+
+# Derive a clean app name from the filename if not provided.
+if [[ -z "$NAME" ]]; then
+    NAME="${APPIMAGE##*/}"
+    NAME="${NAME%.AppImage}"
+    NAME="${NAME%-x86_64}"
+    NAME="${NAME%-amd64}"
+    NAME="${NAME%-X64}"
+    NAME="${NAME%-linux*}"
+    NAME="${NAME%-[0-9]*}"
+fi
+
+APP_CACHE="$CACHE_ROOT/$NAME"
+APP_ROOT="$APP_CACHE/app-root"
+APP_STAMP="$APP_CACHE/source.sha256"
+APP_CONFIG="$CONFIG_ROOT/$NAME"
+
+mkdir -p "$APP_CACHE" "$APP_CONFIG"
+
+# Build the runtime image if missing or rebuild requested.
+if [[ "$REBUILD_IMAGE" -eq 1 ]] || ! podman image exists "$IMAGE"; then
+    echo ">> Building $IMAGE from $SCRIPT_DIR/Containerfile" >&2
+    podman build -t "$IMAGE" "$SCRIPT_DIR"
+fi
+
+# Extract the AppImage to the cache, skipping if the source is unchanged.
+NEW_SHA="$(sha256sum "$APPIMAGE" | awk '{print $1}')"
+OLD_SHA="$(cat "$APP_STAMP" 2>/dev/null || true)"
+if [[ "$RE_EXTRACT" -eq 1 ]] || [[ ! -d "$APP_ROOT" ]] || [[ "$NEW_SHA" != "$OLD_SHA" ]]; then
+    echo ">> Extracting $APPIMAGE to $APP_ROOT" >&2
+    rm -rf "$APP_ROOT" "$APP_CACHE/.extract"
+    mkdir -p "$APP_CACHE/.extract"
+    cp "$APPIMAGE" "$APP_CACHE/.extract/app.AppImage"
+    chmod +x "$APP_CACHE/.extract/app.AppImage"
+    # Zero the AppImage Type-2 magic (bytes 8..10 = 'A','I',\x02) so the kernel
+    # treats it as a plain ELF; otherwise hosts without binfmt_misc registration
+    # (and all containers) refuse to exec it.
+    dd if=/dev/zero of="$APP_CACHE/.extract/app.AppImage" \
+        bs=1 count=3 seek=8 conv=notrunc status=none
+    ( cd "$APP_CACHE/.extract" && ./app.AppImage --appimage-extract >/dev/null )
+    mv "$APP_CACHE/.extract/squashfs-root" "$APP_ROOT"
+    rm -rf "$APP_CACHE/.extract"
+    echo "$NEW_SHA" > "$APP_STAMP"
+fi
+
+# Allow this user's local containers to talk to the X server.
+if command -v xhost >/dev/null 2>&1; then
+    xhost +SI:localuser:"$(id -un)" >/dev/null
+fi
+
+exec podman run --rm -it \
+    --name "appimage-${NAME,,}" \
+    --userns=keep-id \
+    --network=host \
+    -e DISPLAY="${DISPLAY:-:0}" \
+    -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+    -v "${APP_ROOT}:/opt/app:ro" \
+    -v "${APP_CONFIG}:/home/ua" \
+    "$IMAGE" "$@"
