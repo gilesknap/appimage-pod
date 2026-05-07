@@ -18,9 +18,15 @@ Drop the launch script into your `$HOME/bin` and make it executable:
 
 ```bash
 cd $HOME/bin
-curl -O https://raw.githubusercontent.com/gilesknap/appimage-pod/main/appimage-pod
+curl -fsSL -o appimage-pod \
+  "https://raw.githubusercontent.com/gilesknap/appimage-pod/main/appimage-pod?$(date +%s)"
 chmod +x appimage-pod
 ```
+
+> The `?$(date +%s)` suffix is a cache-buster: `raw.githubusercontent.com`
+> sits behind a 5-minute CDN cache, so without it a fresh `curl` can still
+> hand back the previous version of the script for a few minutes after a
+> push.
 
 Then run any AppImage:
 
