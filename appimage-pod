@@ -66,7 +66,10 @@ Env:
                           Default: ghcr.io/gilesknap/appimage-pod:latest
   XDG_CACHE_HOME          Cache root override (default: ~/.cache).
   XDG_CONFIG_HOME         Config root override (default: ~/.config).
-  DISPLAY                 X server to forward (default: :0).
+  DISPLAY                 X server to forward (default: :0). For SSH X11
+                          forwarding (DISPLAY=host:N.M), the host needs
+                          'xauth' installed; the cookie is rewritten with
+                          FamilyWild and mounted into the container.
 
 Examples:
   $0 ~/Downloads/UaExpert-2.0.1-x86_64.AppImage
@@ -235,9 +238,44 @@ if [[ "$FROM_CACHE" -eq 0 ]]; then
     fi
 fi
 
-# Allow this user's local containers to talk to the X server.
-if command -v xhost >/dev/null 2>&1; then
-    xhost +SI:localuser:"$(id -un)" >/dev/null
+# X11 wiring. Two cases:
+#   - Local display (DISPLAY=:N or unix:N): connect via /tmp/.X11-unix and
+#     authorize this user's containers via xhost.
+#   - Remote/TCP display (e.g. SSH X11 forwarding, DISPLAY=host:N.M):
+#     --network=host gives the container access to localhost:6010 etc., but
+#     it needs the MIT-MAGIC-COOKIE from ~/.Xauthority. Rewrite the cookie
+#     with FamilyWild ('ffff') so it isn't tied to the host's hostname.
+EFFECTIVE_DISPLAY="${DISPLAY:-:0}"
+X11_ARGS=( -e DISPLAY="$EFFECTIVE_DISPLAY" )
+if [[ "$EFFECTIVE_DISPLAY" == :* ]] || [[ "$EFFECTIVE_DISPLAY" == unix:* ]]; then
+    X11_ARGS+=( -v /tmp/.X11-unix:/tmp/.X11-unix:rw )
+    if command -v xhost >/dev/null 2>&1; then
+        xhost +SI:localuser:"$(id -un)" >/dev/null 2>&1 || true
+    fi
+else
+    if ! command -v xauth >/dev/null 2>&1; then
+        echo "DISPLAY=$EFFECTIVE_DISPLAY looks like a TCP/forwarded X server," >&2
+        echo "but 'xauth' is not installed on the host so I can't extract the" >&2
+        echo "MIT-MAGIC-COOKIE. Install xauth (e.g. 'sudo dnf install xorg-x11-xauth')." >&2
+        exit 1
+    fi
+    XAUTH_FILE="$APP_CACHE/.Xauthority"
+    : > "$XAUTH_FILE"
+    chmod 600 "$XAUTH_FILE"
+    # FamilyWild entries match any hostname, so the container doesn't need to
+    # share the host's hostname for the cookie to be accepted.
+    xauth nlist "$EFFECTIVE_DISPLAY" | sed -e 's/^..../ffff/' \
+        | xauth -f "$XAUTH_FILE" nmerge - 2>/dev/null
+    if [[ ! -s "$XAUTH_FILE" ]]; then
+        echo "Could not extract an X11 cookie for DISPLAY=$EFFECTIVE_DISPLAY." >&2
+        echo "Is X11 forwarding actually enabled on this SSH session" >&2
+        echo "(ssh -X / -Y, and 'X11Forwarding yes' on the server)?" >&2
+        exit 1
+    fi
+    X11_ARGS+=(
+        -v "$XAUTH_FILE:/tmp/.Xauthority:ro"
+        -e XAUTHORITY=/tmp/.Xauthority
+    )
 fi
 
 RUN_ARGS=(
@@ -247,10 +285,9 @@ RUN_ARGS=(
     --userns=keep-id
     --network=host
     --ipc=host
-    -e DISPLAY="${DISPLAY:-:0}"
     -e XDG_RUNTIME_DIR=/tmp/runtime-ua
     -e APPDIR=/opt/app
-    -v /tmp/.X11-unix:/tmp/.X11-unix:rw
+    "${X11_ARGS[@]}"
     -v "${APP_ROOT}:/opt/app:ro"
     -v "${APP_CONFIG}:/home/ua"
 )
