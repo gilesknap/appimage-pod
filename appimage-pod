@@ -249,6 +249,7 @@ RUN_ARGS=(
     --ipc=host
     -e DISPLAY="${DISPLAY:-:0}"
     -e XDG_RUNTIME_DIR=/tmp/runtime-ua
+    -e APPDIR=/opt/app
     -v /tmp/.X11-unix:/tmp/.X11-unix:rw
     -v "${APP_ROOT}:/opt/app:ro"
     -v "${APP_CONFIG}:/home/ua"
