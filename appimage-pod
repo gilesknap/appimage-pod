@@ -7,6 +7,9 @@
 #   - Per-app persistent state lives in ~/.config/app-image-podman/<name>/ and is
 #     bind-mounted as the container's $HOME, so wherever the app writes under
 #     $HOME ends up captured in one tree per app.
+#   - The container is run --privileged: this is for sharing the host runtime
+#     with the AppImage, not for isolation. --privileged also surfaces every
+#     host device under /dev so apps can reach the GPU, audio, USB, etc.
 set -euo pipefail
 
 IMAGE="${APP_IMAGE_PODMAN_IMAGE:-ghcr.io/gilesknap/appimage-pod:latest}"
@@ -231,9 +234,12 @@ fi
 RUN_ARGS=(
     --rm -it
     --name "appimage-${NAME,,}"
+    --privileged
     --userns=keep-id
     --network=host
+    --ipc=host
     -e DISPLAY="${DISPLAY:-:0}"
+    -e XDG_RUNTIME_DIR=/tmp/runtime-ua
     -v /tmp/.X11-unix:/tmp/.X11-unix:rw
     -v "${APP_ROOT}:/opt/app:ro"
     -v "${APP_CONFIG}:/home/ua"

@@ -7,14 +7,18 @@ ENV DEBIAN_FRONTEND=noninteractive
 # libstdc++, libGL, the xcb stack and a handful of GTK/multimedia bits.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
+        fontconfig \
         fonts-dejavu-core \
         adwaita-icon-theme \
         hicolor-icon-theme \
         libfontconfig1 \
         libfreetype6 \
         libgl1 \
+        libgl1-mesa-dri \
         libegl1 \
         libglu1-mesa \
+        libvulkan1 \
+        mesa-vulkan-drivers \
         libglib2.0-0t64 \
         libdbus-1-3 \
         libnss3 \
