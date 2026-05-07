@@ -179,17 +179,26 @@ if ! command -v podman >/dev/null 2>&1; then
 fi
 
 # Acquire the runtime image: rebuild if requested, else use local copy if
-# present, else try to pull, else fall back to a local build (only if a
-# Containerfile sits next to the script — i.e. running from a clone, not curled).
+# present, else try to pull, else fall back to a local build. The build
+# context is whichever is available — a Containerfile next to the script
+# (i.e. running from a clone) or a fresh tarball from codeload.
 build_local() {
-    if [[ ! -f "$SCRIPT_DIR/Containerfile" ]]; then
-        echo "Image $IMAGE is not available locally and pull failed." >&2
-        echo "If you installed appimage-pod via curl, the registry may be unreachable" >&2
-        echo "or the image not yet published. Otherwise clone the repo to build locally." >&2
-        exit 1
+    local build_dir
+    if [[ -f "$SCRIPT_DIR/Containerfile" ]]; then
+        build_dir="$SCRIPT_DIR"
+    else
+        build_dir="$(mktemp -d)"
+        trap 'rm -rf "$build_dir"' EXIT
+        echo ">> Fetching Containerfile from codeload" >&2
+        if ! curl -fsSL https://codeload.github.com/gilesknap/appimage-pod/tar.gz/refs/heads/main \
+                | tar xz --strip-components=1 -C "$build_dir" appimage-pod-main/Containerfile; then
+            echo "Could not fetch the Containerfile from codeload." >&2
+            echo "Check your network, or clone the repo and run from there." >&2
+            exit 1
+        fi
     fi
-    echo ">> Building $IMAGE from $SCRIPT_DIR/Containerfile" >&2
-    podman build -t "$IMAGE" "$SCRIPT_DIR"
+    echo ">> Building $IMAGE from $build_dir/Containerfile" >&2
+    podman build -t "$IMAGE" "$build_dir"
 }
 
 if [[ "$REBUILD_IMAGE" -eq 1 ]]; then
