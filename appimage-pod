@@ -243,8 +243,12 @@ fi
 #     authorize this user's containers via xhost.
 #   - Remote/TCP display (e.g. SSH X11 forwarding, DISPLAY=host:N.M):
 #     --network=host gives the container access to localhost:6010 etc., but
-#     it needs the MIT-MAGIC-COOKIE from ~/.Xauthority. Rewrite the cookie
-#     with FamilyWild ('ffff') so it isn't tied to the host's hostname.
+#     it needs the MIT-MAGIC-COOKIE from ~/.Xauthority. We do two things:
+#       1. Rewrite all entries with FamilyWild ('ffff') so the cookie isn't
+#          tied to the host's hostname (the container has its own).
+#       2. Mount the file with ':z' so SELinux (RHEL/Fedora) relabels it to
+#          container_file_t — without this the bind-mounted file is
+#          unreadable inside the container and Qt sends no cookie.
 EFFECTIVE_DISPLAY="${DISPLAY:-:0}"
 X11_ARGS=( -e DISPLAY="$EFFECTIVE_DISPLAY" )
 if [[ "$EFFECTIVE_DISPLAY" == :* ]] || [[ "$EFFECTIVE_DISPLAY" == unix:* ]]; then
@@ -261,9 +265,10 @@ else
     fi
     XAUTH_FILE="$APP_CACHE/.Xauthority"
     : > "$XAUTH_FILE"
-    chmod 600 "$XAUTH_FILE"
-    # FamilyWild entries match any hostname, so the container doesn't need to
-    # share the host's hostname for the cookie to be accepted.
+    # World-readable so the in-container user can read it regardless of how
+    # rootless podman ends up mapping ownership; the cookie itself is the
+    # only secret and it's rotated every SSH session.
+    chmod 644 "$XAUTH_FILE"
     xauth nlist "$EFFECTIVE_DISPLAY" | sed -e 's/^..../ffff/' \
         | xauth -f "$XAUTH_FILE" nmerge - 2>/dev/null
     if [[ ! -s "$XAUTH_FILE" ]]; then
@@ -273,7 +278,7 @@ else
         exit 1
     fi
     X11_ARGS+=(
-        -v "$XAUTH_FILE:/tmp/.Xauthority:ro"
+        -v "$XAUTH_FILE:/tmp/.Xauthority:ro,z"
         -e XAUTHORITY=/tmp/.Xauthority
     )
 fi
