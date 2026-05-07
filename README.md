@@ -32,6 +32,19 @@ The first invocation pulls `ghcr.io/gilesknap/appimage-pod:latest` and
 extracts the AppImage to `~/.cache/app-image-podman/<Name>/`. Subsequent
 invocations reuse both.
 
+After the first run the original `.AppImage` file is no longer needed:
+the extraction lives in the cache. Re-launch by bare name:
+
+```bash
+appimage-pod UaExpert
+```
+
+List what's currently cached:
+
+```bash
+appimage-pod --show
+```
+
 > If you don't have `$HOME/bin`, create it with `mkdir $HOME/bin`. It will
 > be added to `$PATH` in any new shells; your current shell won't see it
 > until you reopen it.
@@ -54,14 +67,21 @@ invocations reuse both.
 ## Usage
 
 ```
-appimage-pod [--name NAME] [--rebuild-image] [--re-extract] <AppImage> [args...]
+appimage-pod [--name NAME] [--rebuild-image] [--re-extract] <AppImage|name> [args...]
+appimage-pod --show
 ```
+
+The positional argument is either a path to an `.AppImage` file or a bare
+name that already exists in the cache (e.g. `UaExpert`). A bare name skips
+the extraction step entirely — the original file can be deleted once it's
+been cached on first run.
 
 | Flag | Effect |
 |------|--------|
-| `--name NAME`     | Override the derived app name (used for the per-app config dir). Default: derived from the AppImage filename. |
+| `--name NAME`     | Override the derived app name (used for the per-app cache and config dirs). Default: derived from the AppImage filename, or from the positional argument when launching by name. |
 | `--rebuild-image` | Force rebuild of the runtime image from `./Containerfile` (only useful from a clone). |
-| `--re-extract`    | Force re-extraction of the AppImage. |
+| `--re-extract`    | Force re-extraction of the AppImage (only valid when launching from a file path). |
+| `--show`          | List all cached AppImages and exit. |
 
 | Env var | Effect |
 |---------|--------|
