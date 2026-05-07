@@ -47,6 +47,10 @@ Flags:
                     (only works when run from a clone of the repo).
   --re-extract      Force re-extraction of the AppImage (only valid when
                     launching from a file path or URL).
+  --shell           Drop into a bash shell inside the runtime container
+                    (overrides the AppRun entrypoint). Handy for debugging
+                    missing libs, glibc versions, or X11 problems without
+                    actually launching the GUI.
   --show            List all cached AppImages and exit.
   -h, --help        Show this help and exit.
 
@@ -66,6 +70,7 @@ Examples:
   $0 https://example.com/foo.AppImage   # fetch then run
   $0 UaExpert                           # re-launch from cache
   $0 --name myapp ~/some.AppImage       # override the derived name
+  $0 --shell krita                      # drop into bash inside the runtime
   $0 --show                             # list cached apps
 EOF
     exit "${1:-1}"
@@ -90,6 +95,7 @@ show_cached() {
 NAME=""
 REBUILD_IMAGE=0
 RE_EXTRACT=0
+SHELL_MODE=0
 APPIMAGE=""
 
 while [[ $# -gt 0 ]]; do
@@ -97,6 +103,7 @@ while [[ $# -gt 0 ]]; do
         --name)          NAME="$2"; shift 2 ;;
         --rebuild-image) REBUILD_IMAGE=1; shift ;;
         --re-extract)    RE_EXTRACT=1; shift ;;
+        --shell)         SHELL_MODE=1; shift ;;
         --show)          show_cached; exit 0 ;;
         -h|--help)       usage 0 ;;
         --)              shift; APPIMAGE="${1:-}"; shift || true; break ;;
@@ -161,6 +168,13 @@ fi
 
 mkdir -p "$APP_CACHE" "$APP_CONFIG"
 
+if ! command -v podman >/dev/null 2>&1; then
+    echo "podman is not installed or not on \$PATH." >&2
+    echo "Install it from https://podman.io/docs/installation (e.g." >&2
+    echo "'sudo apt install podman' on Debian/Ubuntu) and try again." >&2
+    exit 1
+fi
+
 # Acquire the runtime image: rebuild if requested, else use local copy if
 # present, else try to pull, else fall back to a local build (only if a
 # Containerfile sits next to the script — i.e. running from a clone, not curled).
@@ -214,12 +228,19 @@ if command -v xhost >/dev/null 2>&1; then
     xhost +SI:localuser:"$(id -un)" >/dev/null
 fi
 
-exec podman run --rm -it \
-    --name "appimage-${NAME,,}" \
-    --userns=keep-id \
-    --network=host \
-    -e DISPLAY="${DISPLAY:-:0}" \
-    -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
-    -v "${APP_ROOT}:/opt/app:ro" \
-    -v "${APP_CONFIG}:/home/ua" \
-    "$IMAGE" "$@"
+RUN_ARGS=(
+    --rm -it
+    --name "appimage-${NAME,,}"
+    --userns=keep-id
+    --network=host
+    -e DISPLAY="${DISPLAY:-:0}"
+    -v /tmp/.X11-unix:/tmp/.X11-unix:rw
+    -v "${APP_ROOT}:/opt/app:ro"
+    -v "${APP_CONFIG}:/home/ua"
+)
+
+if [[ "$SHELL_MODE" -eq 1 ]]; then
+    exec podman run "${RUN_ARGS[@]}" --entrypoint /bin/bash "$IMAGE" "$@"
+fi
+
+exec podman run "${RUN_ARGS[@]}" "$IMAGE" "$@"
