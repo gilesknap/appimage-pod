@@ -18,15 +18,16 @@ Drop the launch script into your `$HOME/bin` and make it executable:
 
 ```bash
 cd $HOME/bin
-curl -fsSL -o appimage-pod \
-  "https://raw.githubusercontent.com/gilesknap/appimage-pod/main/appimage-pod?$(date +%s)"
+curl -fsSL https://codeload.github.com/gilesknap/appimage-pod/tar.gz/refs/heads/main \
+  | tar xz --strip-components=1 appimage-pod-main/appimage-pod
 chmod +x appimage-pod
 ```
 
-> The `?$(date +%s)` suffix is a cache-buster: `raw.githubusercontent.com`
-> sits behind a 5-minute CDN cache, so without it a fresh `curl` can still
-> hand back the previous version of the script for a few minutes after a
-> push.
+> We pull through `codeload.github.com` rather than
+> `raw.githubusercontent.com` because the latter is fronted by a 5-minute
+> Fastly cache that ignores `Cache-Control: no-cache` and query-string
+> cache-busters. `codeload` serves the tarball fresh, so the snippet
+> always lands the latest commit.
 
 Then run any AppImage. You can pass a URL — the AppImage will be
 downloaded, extracted, and run in one step:
