@@ -20,11 +20,13 @@ Usage: $0 [--name NAME] [--rebuild-image] [--re-extract] <AppImage> [args...]
 
   --name NAME       Override the derived app name (used for image tag and
                     config dir). Default: derived from the AppImage filename.
-  --rebuild-image   Force rebuild of the runtime image from ./Containerfile.
+  --rebuild-image   Force rebuild of the runtime image from ./Containerfile
+                    (only works when run from a clone of the repo).
   --re-extract      Force re-extraction of the AppImage (otherwise cached).
 
 Env:
-  APP_IMAGE_PODMAN_IMAGE  Image reference (default: localhost/app-image-podman:latest).
+  APP_IMAGE_PODMAN_IMAGE  Override the runtime image reference.
+                          Default: ghcr.io/gilesknap/appimage-pod:latest
 EOF
     exit "${1:-1}"
 }
@@ -68,16 +70,27 @@ APP_CONFIG="$CONFIG_ROOT/$NAME"
 mkdir -p "$APP_CACHE" "$APP_CONFIG"
 
 # Acquire the runtime image: rebuild if requested, else use local copy if
-# present, else try to pull, else fall back to a local build from Containerfile.
-if [[ "$REBUILD_IMAGE" -eq 1 ]]; then
+# present, else try to pull, else fall back to a local build (only if a
+# Containerfile sits next to the script — i.e. running from a clone, not curled).
+build_local() {
+    if [[ ! -f "$SCRIPT_DIR/Containerfile" ]]; then
+        echo "Image $IMAGE is not available locally and pull failed." >&2
+        echo "If you installed appimage-pod via curl, the registry may be unreachable" >&2
+        echo "or the image not yet published. Otherwise clone the repo to build locally." >&2
+        exit 1
+    fi
     echo ">> Building $IMAGE from $SCRIPT_DIR/Containerfile" >&2
     podman build -t "$IMAGE" "$SCRIPT_DIR"
+}
+
+if [[ "$REBUILD_IMAGE" -eq 1 ]]; then
+    build_local
 elif ! podman image exists "$IMAGE"; then
     if podman pull "$IMAGE" >/dev/null 2>&1; then
         echo ">> Pulled $IMAGE" >&2
     else
-        echo ">> Pull failed, building $IMAGE from $SCRIPT_DIR/Containerfile" >&2
-        podman build -t "$IMAGE" "$SCRIPT_DIR"
+        echo ">> Pull failed, falling back to local build" >&2
+        build_local
     fi
 fi
 
