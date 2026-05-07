@@ -9,7 +9,7 @@
 #     $HOME ends up captured in one tree per app.
 set -euo pipefail
 
-IMAGE="${APP_IMAGE_PODMAN_IMAGE:-localhost/app-image-podman:latest}"
+IMAGE="${APP_IMAGE_PODMAN_IMAGE:-ghcr.io/gilesknap/appimage-pod:latest}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/app-image-podman"
 CONFIG_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}/app-image-podman"
@@ -67,10 +67,18 @@ APP_CONFIG="$CONFIG_ROOT/$NAME"
 
 mkdir -p "$APP_CACHE" "$APP_CONFIG"
 
-# Build the runtime image if missing or rebuild requested.
-if [[ "$REBUILD_IMAGE" -eq 1 ]] || ! podman image exists "$IMAGE"; then
+# Acquire the runtime image: rebuild if requested, else use local copy if
+# present, else try to pull, else fall back to a local build from Containerfile.
+if [[ "$REBUILD_IMAGE" -eq 1 ]]; then
     echo ">> Building $IMAGE from $SCRIPT_DIR/Containerfile" >&2
     podman build -t "$IMAGE" "$SCRIPT_DIR"
+elif ! podman image exists "$IMAGE"; then
+    if podman pull "$IMAGE" >/dev/null 2>&1; then
+        echo ">> Pulled $IMAGE" >&2
+    else
+        echo ">> Pull failed, building $IMAGE from $SCRIPT_DIR/Containerfile" >&2
+        podman build -t "$IMAGE" "$SCRIPT_DIR"
+    fi
 fi
 
 # Extract the AppImage to the cache, skipping if the source is unchanged.
