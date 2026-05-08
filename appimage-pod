@@ -66,6 +66,14 @@ Paths:
   tree. The mounts use rslave propagation, so autofs sub-mounts triggered on
   the host become visible inside the container.
 
+GPU acceleration:
+  NVIDIA GPUs are picked up automatically when the NVIDIA Container Toolkit
+  is installed on the host AND a CDI spec has been generated. To enable, run
+  once as root (and again after every driver upgrade):
+      nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+  Without it, /dev/nvidia* is still exposed via --privileged but the matching
+  userspace libs are missing, so apps fall back to llvmpipe (software GL).
+
 Env:
   APP_IMAGE_PODMAN_IMAGE  Override the runtime image reference.
                           Default: ghcr.io/gilesknap/appimage-pod:latest
@@ -278,6 +286,46 @@ if [[ "$EFFECTIVE_DISPLAY" == :* ]] || [[ "$EFFECTIVE_DISPLAY" == unix:* ]]; the
     X11_ARGS+=( -v /tmp/.X11-unix:/tmp/.X11-unix:rw )
 fi
 
+# User runtime dir wiring. The container's user is uid 1000 (mapped from the
+# caller via keep-id), so its runtime dir lives at /run/user/1000. Bind in the
+# host's runtime dir so the session bus, PulseAudio/PipeWire, and any other
+# per-user sockets are reachable inside. Without this, KDE/GTK apps flood the
+# console with D-Bus errors and audio falls back to "no driver".
+HOST_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+CONTAINER_RUNTIME_DIR="/run/user/1000"
+RUNTIME_ARGS=()
+if [[ -d "$HOST_RUNTIME_DIR" ]]; then
+    RUNTIME_ARGS+=(
+        -v "$HOST_RUNTIME_DIR:$CONTAINER_RUNTIME_DIR"
+        -e "XDG_RUNTIME_DIR=$CONTAINER_RUNTIME_DIR"
+    )
+    if [[ -S "$HOST_RUNTIME_DIR/bus" ]]; then
+        RUNTIME_ARGS+=( -e "DBUS_SESSION_BUS_ADDRESS=unix:path=$CONTAINER_RUNTIME_DIR/bus" )
+    fi
+else
+    # No host runtime dir to forward — give XDG-aware apps a writable target.
+    RUNTIME_ARGS+=( -e "XDG_RUNTIME_DIR=/tmp/runtime-ua" )
+fi
+
+# GPU wiring. If the NVIDIA Container Toolkit is set up on the host (i.e. a
+# CDI spec for nvidia.com/gpu has been generated), ask podman to inject the
+# matching NVIDIA userspace libs (libGLX_nvidia, libnvidia-glcore, libEGL_nvidia,
+# libcuda, etc.) into the container so apps get hardware GL/Vulkan instead of
+# llvmpipe. /dev/nvidia* is already exposed by --privileged; what's missing
+# without CDI is the driver-version-matched userspace stack, which is what
+# causes "failed to create drawable" and the silent llvmpipe fallback.
+#
+# Generate the spec on the host (as root) with:
+#   nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+# Re-run after every NVIDIA driver upgrade so the CDI lib paths stay in sync.
+GPU_ARGS=()
+for cdi_spec in /etc/cdi/nvidia.yaml /etc/cdi/nvidia.json /var/run/cdi/nvidia.yaml /var/run/cdi/nvidia.json; do
+    if [[ -e "$cdi_spec" ]]; then
+        GPU_ARGS=( --device "nvidia.com/gpu=all" )
+        break
+    fi
+done
+
 # Bind in $HOME and /dls_sw (Diamond's autofs tree) so apps can browse the
 # user's files and reach site software. Both can sit on top of autofs, so use
 # rslave propagation: child mounts triggered on the host (e.g. autofs firing
@@ -298,8 +346,9 @@ RUN_ARGS=(
     --userns=keep-id:uid=1000,gid=1000
     --network=host
     --ipc=host
-    -e XDG_RUNTIME_DIR=/tmp/runtime-ua
     -e APPDIR=/opt/app
+    "${RUNTIME_ARGS[@]}"
+    "${GPU_ARGS[@]}"
     "${X11_ARGS[@]}"
     -v "${APP_ROOT}:/opt/app:ro"
     -v "${APP_CONFIG}:/home/ua"
