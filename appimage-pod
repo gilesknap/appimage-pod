@@ -279,7 +279,7 @@ if [[ ! -s "$XAUTH_FILE" ]]; then
     exit 1
 fi
 X11_ARGS+=(
-    -v "$XAUTH_FILE:/tmp/.Xauthority:ro,idmap"
+    -v "$XAUTH_FILE:/tmp/.Xauthority:ro"
     -e XAUTHORITY=/tmp/.Xauthority
 )
 if [[ "$EFFECTIVE_DISPLAY" == :* ]] || [[ "$EFFECTIVE_DISPLAY" == unix:* ]]; then
@@ -364,8 +364,8 @@ RUN_ARGS=(
     "${RUNTIME_ARGS[@]}"
     "${GPU_ARGS[@]}"
     "${X11_ARGS[@]}"
-    -v "${APP_ROOT}:/opt/app:ro,idmap"
-    -v "${APP_CONFIG}:/home/ua:idmap"
+    -v "${APP_ROOT}:/opt/app:ro"
+    -v "${APP_CONFIG}:/home/ua"
     "${EXTRA_MOUNTS[@]}"
 )
 
