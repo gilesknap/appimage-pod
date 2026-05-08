@@ -61,6 +61,11 @@ Paths:
   Cache:   $CACHE_ROOT/<name>/app-root/   (extracted AppImage tree)
   Config:  $CONFIG_ROOT/<name>/           (mounted as the container's \$HOME)
 
+  The host's \$HOME and (if it exists) /dls_sw are bind-mounted at the same
+  paths so apps can open files from your home and reach Diamond's software
+  tree. The mounts use rslave propagation, so autofs sub-mounts triggered on
+  the host become visible inside the container.
+
 Env:
   APP_IMAGE_PODMAN_IMAGE  Override the runtime image reference.
                           Default: ghcr.io/gilesknap/appimage-pod:latest
@@ -238,51 +243,59 @@ if [[ "$FROM_CACHE" -eq 0 ]]; then
     fi
 fi
 
-# X11 wiring. Two cases:
-#   - Local display (DISPLAY=:N or unix:N): connect via /tmp/.X11-unix and
-#     authorize this user's containers via xhost.
-#   - Remote/TCP display (e.g. SSH X11 forwarding, DISPLAY=host:N.M):
-#     --network=host gives the container access to localhost:6010 etc., but
-#     it needs the MIT-MAGIC-COOKIE from ~/.Xauthority. Rewrite the cookie
-#     with FamilyWild ('ffff') so it isn't tied to the host's hostname.
+# X11 wiring. Modern X servers (Xorg, Xwayland, Xvnc, SSH's X proxy) all
+# enforce MIT-MAGIC-COOKIE auth, so simply exposing the socket isn't enough.
+# Always extract this user's cookie for $DISPLAY and rewrite it as FamilyWild
+# ('ffff') so the hostname inside the container doesn't have to match the
+# host's. For local displays we also bind-mount /tmp/.X11-unix so the
+# container can reach the unix socket.
 EFFECTIVE_DISPLAY="${DISPLAY:-:0}"
 X11_ARGS=( -e DISPLAY="$EFFECTIVE_DISPLAY" )
+
+if ! command -v xauth >/dev/null 2>&1; then
+    echo "'xauth' is not installed on the host so I can't extract the X11" >&2
+    echo "cookie for DISPLAY=$EFFECTIVE_DISPLAY. Install xauth (e.g." >&2
+    echo "'sudo dnf install xorg-x11-xauth' or 'sudo apt install xauth')." >&2
+    exit 1
+fi
+XAUTH_FILE="$APP_CACHE/.Xauthority"
+: > "$XAUTH_FILE"
+chmod 600 "$XAUTH_FILE"
+xauth nlist "$EFFECTIVE_DISPLAY" | sed -e 's/^..../ffff/' \
+    | xauth -f "$XAUTH_FILE" nmerge - 2>/dev/null
+if [[ ! -s "$XAUTH_FILE" ]]; then
+    echo "Could not extract an X11 cookie for DISPLAY=$EFFECTIVE_DISPLAY." >&2
+    echo "Check that 'xauth list \"$EFFECTIVE_DISPLAY\"' shows a cookie. For" >&2
+    echo "SSH sessions, ensure X11 forwarding is enabled (ssh -X / -Y, and" >&2
+    echo "'X11Forwarding yes' on the server)." >&2
+    exit 1
+fi
+X11_ARGS+=(
+    -v "$XAUTH_FILE:/tmp/.Xauthority:ro"
+    -e XAUTHORITY=/tmp/.Xauthority
+)
 if [[ "$EFFECTIVE_DISPLAY" == :* ]] || [[ "$EFFECTIVE_DISPLAY" == unix:* ]]; then
     X11_ARGS+=( -v /tmp/.X11-unix:/tmp/.X11-unix:rw )
-    if command -v xhost >/dev/null 2>&1; then
-        xhost +SI:localuser:"$(id -un)" >/dev/null 2>&1 || true
-    fi
-else
-    if ! command -v xauth >/dev/null 2>&1; then
-        echo "DISPLAY=$EFFECTIVE_DISPLAY looks like a TCP/forwarded X server," >&2
-        echo "but 'xauth' is not installed on the host so I can't extract the" >&2
-        echo "MIT-MAGIC-COOKIE. Install xauth (e.g. 'sudo dnf install xorg-x11-xauth')." >&2
-        exit 1
-    fi
-    XAUTH_FILE="$APP_CACHE/.Xauthority"
-    : > "$XAUTH_FILE"
-    chmod 600 "$XAUTH_FILE"
-    # FamilyWild entries match any hostname, so the container doesn't need to
-    # share the host's hostname for the cookie to be accepted.
-    xauth nlist "$EFFECTIVE_DISPLAY" | sed -e 's/^..../ffff/' \
-        | xauth -f "$XAUTH_FILE" nmerge - 2>/dev/null
-    if [[ ! -s "$XAUTH_FILE" ]]; then
-        echo "Could not extract an X11 cookie for DISPLAY=$EFFECTIVE_DISPLAY." >&2
-        echo "Is X11 forwarding actually enabled on this SSH session" >&2
-        echo "(ssh -X / -Y, and 'X11Forwarding yes' on the server)?" >&2
-        exit 1
-    fi
-    X11_ARGS+=(
-        -v "$XAUTH_FILE:/tmp/.Xauthority:ro"
-        -e XAUTHORITY=/tmp/.Xauthority
-    )
+fi
+
+# Bind in $HOME and /dls_sw (Diamond's autofs tree) so apps can browse the
+# user's files and reach site software. Both can sit on top of autofs, so use
+# rslave propagation: child mounts triggered on the host (e.g. autofs firing
+# on /dls_sw/apps) propagate into the container, but the container can't
+# affect the host's mount tree.
+EXTRA_MOUNTS=()
+if [[ -n "${HOME:-}" && -d "$HOME" ]]; then
+    EXTRA_MOUNTS+=( --mount "type=bind,src=$HOME,dst=$HOME,bind-propagation=rslave" )
+fi
+if [[ -d /dls_sw ]]; then
+    EXTRA_MOUNTS+=( --mount "type=bind,src=/dls_sw,dst=/dls_sw,bind-propagation=rslave" )
 fi
 
 RUN_ARGS=(
     --rm -it
     --name "appimage-${NAME,,}"
     --privileged
-    --userns=keep-id
+    --userns=keep-id:uid=1000,gid=1000
     --network=host
     --ipc=host
     -e XDG_RUNTIME_DIR=/tmp/runtime-ua
@@ -290,6 +303,7 @@ RUN_ARGS=(
     "${X11_ARGS[@]}"
     -v "${APP_ROOT}:/opt/app:ro"
     -v "${APP_CONFIG}:/home/ua"
+    "${EXTRA_MOUNTS[@]}"
 )
 
 if [[ "$SHELL_MODE" -eq 1 ]]; then
