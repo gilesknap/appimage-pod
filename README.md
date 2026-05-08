@@ -12,6 +12,13 @@ AppImage and rebuilding for a new app takes seconds.
 | Image  | `ghcr.io/gilesknap/appimage-pod:latest` |
 | Releases | <https://github.com/gilesknap/appimage-pod/releases> |
 
+> **DLS users:** AppImage extractions land in `~/.cache/app-image-podman/`
+> and can fill your home quota fast (a single Krita extraction is several
+> hundred MB). Move `~/.cache` out of your home dir before you start —
+> see [Disk quota — moving .cache][dls-quota].
+
+[dls-quota]: https://dev-guide.diamond.ac.uk/linux-user-environment/how-tos/disk-quota/
+
 ## Quick Start
 
 Drop the launch script into your `$HOME/bin` and make it executable:
@@ -30,11 +37,14 @@ chmod +x appimage-pod
 > always lands the latest commit.
 
 Then run any AppImage. You can pass a URL — the AppImage will be
-downloaded, extracted, and run in one step:
+downloaded, extracted, and run in one step. For example, [Krita] (a
+free digital painting program) ships as an AppImage:
 
 ```bash
 appimage-pod https://download.kde.org/stable/krita/5.3.1/krita-5.3.1-x86_64.AppImage
 ```
+
+[Krita]: https://krita.org/
 
 …or a local file:
 
@@ -109,7 +119,7 @@ A few good AppImages to smoke-test the runtime:
 # appimagetool — small (~15MB), reference AppImage from the AppImage project
 appimage-pod https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage --version
 
-# Krita — heavyweight, exercises Qt/OpenGL/multimedia
+# Krita — a digital painting program; heavyweight, exercises Qt/OpenGL/multimedia
 appimage-pod https://download.kde.org/stable/krita/5.3.1/krita-5.3.1-x86_64.AppImage
 ```
 
