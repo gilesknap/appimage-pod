@@ -30,11 +30,9 @@ curl -fsSL https://codeload.github.com/gilesknap/appimage-pod/tar.gz/refs/heads/
 chmod +x appimage-pod
 ```
 
-> We pull through `codeload.github.com` rather than
-> `raw.githubusercontent.com` because the latter is fronted by a 5-minute
-> Fastly cache that ignores `Cache-Control: no-cache` and query-string
-> cache-busters. `codeload` serves the tarball fresh, so the snippet
-> always lands the latest commit.
+> If you don't have `$HOME/bin`, create it with `mkdir $HOME/bin`. It will
+> be added to `$PATH` in any new shells; your current shell won't see it
+> until you reopen it.
 
 Then run any AppImage. You can pass a URL — the AppImage will be
 downloaded, extracted, and run in one step. For example, [Krita] (a
@@ -68,10 +66,6 @@ List what's currently cached:
 ```bash
 appimage-pod --show
 ```
-
-> If you don't have `$HOME/bin`, create it with `mkdir $HOME/bin`. It will
-> be added to `$PATH` in any new shells; your current shell won't see it
-> until you reopen it.
 
 ## How it works
 
