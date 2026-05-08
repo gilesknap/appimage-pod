@@ -54,6 +54,13 @@ Flags:
                     (overrides the AppRun entrypoint). Handy for debugging
                     missing libs, glibc versions, or X11 problems without
                     actually launching the GUI.
+  --keep-id         Run the container as the image's 'ua' user (uid 1000)
+                    using --userns=keep-id, instead of the default which
+                    runs as namespace-root (mapped to your host uid).
+                    The default works on NFS homes; --keep-id only works
+                    when bind-mount sources are on a local filesystem,
+                    but it's needed for AppImages that refuse to run as
+                    root in their own user namespace.
   --show            List all cached AppImages and exit.
   -h, --help        Show this help and exit.
 
@@ -115,6 +122,7 @@ NAME=""
 REBUILD_IMAGE=0
 RE_EXTRACT=0
 SHELL_MODE=0
+KEEP_ID=0
 APPIMAGE=""
 
 while [[ $# -gt 0 ]]; do
@@ -123,6 +131,7 @@ while [[ $# -gt 0 ]]; do
         --rebuild-image) REBUILD_IMAGE=1; shift ;;
         --re-extract)    RE_EXTRACT=1; shift ;;
         --shell)         SHELL_MODE=1; shift ;;
+        --keep-id)       KEEP_ID=1; shift ;;
         --show)          show_cached; exit 0 ;;
         -h|--help)       usage 0 ;;
         --)              shift; APPIMAGE="${1:-}"; shift || true; break ;;
@@ -307,6 +316,19 @@ else
     RUNTIME_ARGS+=( -e "XDG_RUNTIME_DIR=/tmp/runtime-ua" )
 fi
 
+# System D-Bus wiring. The session bus is forwarded via XDG_RUNTIME_DIR above,
+# but Electron/Chromium and many GTK apps also probe the system bus (for
+# NetworkManager, UPower, hostname1, etc.). Without it they spam
+# "Failed to connect to socket /run/dbus/system_bus_socket" on every launch.
+# Mount the host's system bus socket directly; with --privileged + --network=host
+# already in effect, this is no escalation.
+for sb in /run/dbus/system_bus_socket /var/run/dbus/system_bus_socket; do
+    if [[ -S "$sb" ]]; then
+        RUNTIME_ARGS+=( -v "$sb:/run/dbus/system_bus_socket" )
+        break
+    fi
+done
+
 # GPU wiring. If the NVIDIA Container Toolkit is set up on the host (i.e. a
 # CDI spec for nvidia.com/gpu has been generated), ask podman to inject the
 # matching NVIDIA userspace libs (libGLX_nvidia, libnvidia-glcore, libEGL_nvidia,
@@ -339,11 +361,30 @@ if [[ -d /dls_sw ]]; then
     EXTRA_MOUNTS+=( --mount "type=bind,src=/dls_sw,dst=/dls_sw,bind-propagation=rslave" )
 fi
 
+# User-namespace strategy. Default: drop --userns=keep-id and run as
+# namespace-root (--user 0:0). Namespace-root maps to the calling user on
+# the host, so bind-mount setup (which crun does as namespace-uid 0) runs
+# as a uid the host filesystem recognises -- crucial when $HOME is on NFS,
+# where a subuid-mapped namespace-uid 0 is rejected by the server. Files
+# the container writes still land owned by the calling user on the host,
+# so /home/ua persistence still works.
+#
+# --keep-id opts back into the previous behaviour (run as uid 1000 / 'ua'
+# inside the container, with keep-id mapping). Use it for AppImages that
+# refuse to run as root, but only on local-FS homes.
+USERNS_ARGS=()
+if [[ "$KEEP_ID" -eq 1 ]]; then
+    USERNS_ARGS=( --userns=keep-id:uid=1000,gid=1000 )
+else
+    USERNS_ARGS=( --user 0:0 -e HOME=/home/ua )
+fi
+
 RUN_ARGS=(
     --rm -it
     --name "appimage-${NAME,,}"
     --privileged
-    --userns=keep-id:uid=1000,gid=1000
+    --security-opt label=disable
+    "${USERNS_ARGS[@]}"
     --network=host
     --ipc=host
     -e APPDIR=/opt/app
