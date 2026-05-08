@@ -307,6 +307,19 @@ else
     RUNTIME_ARGS+=( -e "XDG_RUNTIME_DIR=/tmp/runtime-ua" )
 fi
 
+# System D-Bus wiring. The session bus is forwarded via XDG_RUNTIME_DIR above,
+# but Electron/Chromium and many GTK apps also probe the system bus (for
+# NetworkManager, UPower, hostname1, etc.). Without it they spam
+# "Failed to connect to socket /run/dbus/system_bus_socket" on every launch.
+# Mount the host's system bus socket directly; with --privileged + --network=host
+# already in effect, this is no escalation.
+for sb in /run/dbus/system_bus_socket /var/run/dbus/system_bus_socket; do
+    if [[ -S "$sb" ]]; then
+        RUNTIME_ARGS+=( -v "$sb:/run/dbus/system_bus_socket" )
+        break
+    fi
+done
+
 # GPU wiring. If the NVIDIA Container Toolkit is set up on the host (i.e. a
 # CDI spec for nvidia.com/gpu has been generated), ask podman to inject the
 # matching NVIDIA userspace libs (libGLX_nvidia, libnvidia-glcore, libEGL_nvidia,
