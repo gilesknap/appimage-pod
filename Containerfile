@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libvulkan1 \
         mesa-vulkan-drivers \
         libglib2.0-0t64 \
+        libglib2.0-bin \
         libdbus-1-3 \
         libnss3 \
         libnspr4 \
@@ -60,6 +61,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libgssapi-krb5-2 \
         zlib1g \
     && rm -rf /var/lib/apt/lists/*
+
+# xdg-open shim: forward URL clicks to the host browser via the freedesktop
+# OpenURI portal. The host's session DBus socket is bind-mounted at runtime;
+# if no portal is running on the host, gdbus errors out and the calling app
+# falls back to its existing "no browser" warning -- no regression.
+RUN <<'EOF'
+cat > /usr/local/bin/xdg-open <<'SHIM'
+#!/bin/sh
+exec gdbus call --session \
+    --dest org.freedesktop.portal.Desktop \
+    --object-path /org/freedesktop/portal/desktop \
+    --method org.freedesktop.portal.OpenURI.OpenURI \
+    "" "$1" "{}" >/dev/null
+SHIM
+chmod +x /usr/local/bin/xdg-open
+EOF
 
 RUN userdel -r ubuntu 2>/dev/null || true \
     && useradd -m -u 1000 ua
